@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from livekit import api
+from livekit.api import AccessToken, VideoGrants
 from pydantic import BaseModel
 
 # FastAPI application setup
@@ -10,22 +10,19 @@ app = FastAPI()
 # Configuration for CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"], # Allow all origins for development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Pydantic model for the request payload
+# Pydantic model for the request payload, now including the LiveKit URL
 class TokenResponse(BaseModel):
     token: str
+    livekit_url: str
 
 @app.get("/token", response_model=TokenResponse)
 async def get_livekit_token(roomName: str, participantName: str):
-    """
-    Generates a LiveKit access token for a given room and participant.
-    """
-    # Load LiveKit credentials from environment variables
     livekit_url = os.environ.get("LIVEKIT_URL")
     livekit_api_key = os.environ.get("LIVEKIT_API_KEY")
     livekit_api_secret = os.environ.get("LIVEKIT_API_SECRET")
@@ -37,11 +34,12 @@ async def get_livekit_token(roomName: str, participantName: str):
         )
 
     # Use the LiveKit SDK to create a new access token
-    token = api.AccessToken(livekit_api_key, livekit_api_secret)
+    token = AccessToken(livekit_api_key, livekit_api_secret)
     token.with_identity(participantName)
     token.with_name(participantName)
-    token.with_grants(api.VideoGrants(room_join=True, room=roomName))
+    token.with_grants(VideoGrants(room_join=True, room=roomName))
 
     jwt_token = token.to_jwt()
 
-    return {"token": jwt_token}
+    # Return both the token and the LiveKit URL
+    return {"token": jwt_token, "livekit_url": livekit_url}
