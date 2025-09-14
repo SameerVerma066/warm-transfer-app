@@ -1,92 +1,55 @@
 """
-LiveKit Router Module
-Handles all LiveKit-specific endpoints including token generation and room management.
+Token Generation Utility for LiveKit Access
+This module provides functionality for generating LiveKit access tokens with specific permissions.
 """
 
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
 from typing import Optional
-from utils.token_generator import TokenGenerator
-import uuid
+from livekit.api import AccessToken , VideoGrants
+import os
+from datetime import datetime, timedelta
 
-router = APIRouter()
-
-# Dependency to create TokenGenerator only when needed
-def get_token_generator() -> TokenGenerator:
-    return TokenGenerator()
-
-class TokenRequest(BaseModel):
-    identity: str
-    room_name: str
-    name: Optional[str] = None
-
-class WarmTransferRequest(BaseModel):
-    caller_id: str
-    agent_a_id: str
-    agent_b_id: str
-    current_room: str
-    conversation_context: str
-
-class DisconnectRequest(BaseModel):
-    room_name: str
-    participant_id: str
-
-
-@router.post("/token")
-async def generate_token(
-    request: TokenRequest,
-    token_generator: TokenGenerator = Depends(get_token_generator)
-):
+class TokenGenerator:
     """
-    Generate a LiveKit access token for a participant.
+    A utility class for generating LiveKit access tokens with configurable permissions.
     """
-    try:
-        token = token_generator.generate_token(
-            identity=request.identity,
-            room_name=request.room_name,
-            name=request.name
-        )
-        return {"token": token}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    
+    def __init__(self):
+        """Initialize the TokenGenerator with API key and secret from environment variables."""
+        self.api_key = os.getenv('LIVEKIT_API_KEY')
+        self.api_secret = os.getenv('LIVEKIT_API_SECRET')
+        
+        if not self.api_key or not self.api_secret:
+            raise ValueError("LIVEKIT_API_KEY and LIVEKIT_API_SECRET must be set in environment variables")
 
-
-@router.post("/warm-transfer")
-async def initiate_warm_transfer(
-    request: WarmTransferRequest,
-    token_generator: TokenGenerator = Depends(get_token_generator)
-):
-    """
-    Initiate a warm transfer by creating a new room and generating tokens.
-    """
-    try:
-        new_room = f"transfer-{uuid.uuid4()}"
-        caller_token = token_generator.generate_token(
-            identity=request.caller_id,
-            room_name=new_room
-        )
-        agent_b_token = token_generator.generate_token(
-            identity=request.agent_b_id,
-            room_name=new_room
-        )
-        return {
-            "new_room": new_room,
-            "caller_token": caller_token,
-            "agent_b_token": agent_b_token
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/disconnect")
-async def disconnect_participant(request: DisconnectRequest):
-    """
-    Disconnect a participant from a room.
-    """
-    try:
-        # In production, use LiveKit server API to force-disconnect.
-        return {
-            "message": f"Participant {request.participant_id} disconnected from room {request.room_name}"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    def generate_token(
+        self,
+        identity: str,
+        room_name: str,
+        name: Optional[str] = None,
+        ttl: int = 3600,  # 1 hour default
+        can_publish: bool = True,
+        can_subscribe: bool = True,
+        can_publish_data: bool = True
+    ) -> str:
+        """
+        Generate a LiveKit access token with specified permissions.
+        """
+        token = AccessToken(self.api_key, self.api_secret)
+        
+        # Set token identity and metadata
+        token.identity = identity
+        if name:
+            token.name = name
+            
+        # Set token validity period
+        token.ttl = timedelta(seconds=ttl)
+        
+        # Grant room access with specified permissions
+        grant = token.grant
+        grant.room_join = True
+        grant.room = room_name
+        grant.can_publish = can_publish
+        grant.can_subscribe = can_subscribe
+        grant.can_publish_data = can_publish_data
+        
+        return token.to_jwt()
